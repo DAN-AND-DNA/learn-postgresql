@@ -136,32 +136,32 @@
     ssl = off # 取消ssl认证
 
     # 5.内存
-    shared_buffers = 128MB # 共享内存缓冲区大小，属于全局共享
-    huge_page = try # 对共享内存开启标准巨型页，需要操作系统支持，并配置系统内核中的hugepages相关参数来调整巨型页池行为
-    temp_buffes = 8MB # 会话层级的临时表缓冲区
-    work_mem = 4MB # 操作层级的可用内存，属于进程本地内存，若实际内存大于该值，就会写入临时结果到磁盘中的临时文件中
-    max_stack_depth = 2MB # 可以根据实际系统的栈深度来定，比如 ulimit -s 再减去1-2MB的大小
+    shared_buffers = 128MB # postgresql的共享内存缓冲区大小，以数据块作为单位读写，属于全局共享，与操作系统的高速缓冲有所重复，所以这个值不用很大，尽量使用操作系统的高速缓冲
+    huge_page = try # 对共享缓冲开启标准巨型页，需要操作系统支持，并配置系统内核中的hugepages相关参数来调整巨型页池行为
+    temp_buffers = 8MB # 会话层级的临时表的缓冲区，属于进程本地内存
+    work_mem = 4MB # 操作层级的内存上限，属于进程本地内存，若实际内存大于该值，就会写入临时结果到磁盘中
+    max_stack_depth = 2MB # 可以根据操作系统的实际栈深度来定，比如 ulimit -s 再减去1-2MB的大小
     shared_memory_type = mmap # 共享内存在操作系统上的实现方式，其中mmap是比较常见的方式，详细可以参考操作系统api
     dynamic_shared_memory_type = posix # 动态共享内存在操作系统上的实现方式，若是posix，会调用sham_open来生成基于内存的临时目录，该目录供mmap映射到进程中进行使用，结束使用时被系统清理
 
     # 6.磁盘
-    temp_file_limit = -1 # 磁盘中的临时文件大小，-1即没有限制
+    temp_file_limit = -1 # 每个进程存放临时文件的磁盘大小上限，-1即没有限制
 
     # 7.内核
     max_files_per_process = 1000 # postgresql进程的文件描述符上限，这个选项要依赖操作系统的设置
     
     # 8.减低VACUUM和ANALYZE命令的io开销
     vacuum_cost_delay = 0 # 大于0表示开启，并作为VACUUM和ANALYZE命令执行进程的休眠时间（毫秒），休眠结束重新计数
-    vaccum_cost_page_hit = 1 # 在共享缓存中找到要清理的数据所在页的代价
-    vaccum_cost_page_miss = 10 # 要清理的数据不在共享缓存的页中，从磁盘内加载到共享缓存的代价
-    vaccum_cost_page_dirty = 20 # 清理的数据需要修改数据导致脏页，并需刷回磁盘的代价
+    vaccum_cost_page_hit = 1 # 在共享缓冲中找到要清理的数据的代价
+    vaccum_cost_page_miss = 10 # 要清理的数据不在共享缓冲中，从磁盘内加载到共享缓冲的代价
+    vaccum_cost_page_dirty = 20 # 要清理的数据需要修改数据导致需刷回磁盘的代价
     vaccum_cost_limit = 200 # 根据累计的代价值进行休眠vacuum_cost_delay时间
 
     # 9.后台写入进程
-    bgwriter_delay = 200ms # 刷脏页到磁盘的周期
-    bgwriter_lru_maxpages = 100 # 最大刷脏页数量
+    bgwriter_delay = 200ms # 刷postgresql中共享缓冲内的脏页数据到磁盘的周期，这里脏页是在postgresql的共享缓存中定义的
+    bgwriter_lru_maxpages = 100 # 每次刷磁盘的最大刷脏页数量，这里脏页是在postgresql的共享缓存中定义的
     bgwriter_lru_multipages = 2.0 
-    bgwriter_flush_after = 0 # 0为按照操作系统的配置来，2MB是最大限制，这个选项是后台写入数据量达到一定量就强制操作系统将高速缓冲的脏页刷到磁盘
+    bgwriter_flush_after = 0 # 0为按照操作系统的配置来，2MB是最大限制，这个选项是后台写入数据量达到一定量就强制操作系统将postgresql的共享高速缓冲里的脏页刷到磁盘，这里脏页是在postgresql的共享缓存中定义的，而非操作系统自己的高速缓冲
 
     # 10.异步
     effective_io_concurrency = 1 # 全局范围的对磁盘的并发io数，最好在创建表空间时覆盖该参数，过高的并发数也容易导致磁盘进行排队，延迟过高
@@ -169,16 +169,29 @@
     max_parallel_workers = 8 # 每个操作支持的最大并行worker数，worker代表工作进程
     max_parallel_workers_per_gather = 2 # 当postgreql查询优化器判断需要并行查询时，会创建gather节点，并决定其worker的数量
     max_parallel_maintenance_workers = 2 # 目前只会影响创建索引的并行worker数
-    backend_flush_after = 0 # 0为按照操作系统来，2MB是最大上限，这个选项是当后台写入数据量达到一定量就强制操作系统将高速缓冲的脏页刷到磁盘
+    backend_flush_after = 0 # 0为按照操作系统来，2MB是最大限制，这个选项是后台写入数据量达到一定量就强制操作系统将postgresql的共享高速缓冲里的脏页刷到磁盘，这里脏页是在postgresql的共享缓存中定义的，而非操作系统自己的高速缓冲
 
-    # 11.预写日志
+    # 11.预写日志 wal（行级数据）
     wal_level = replica  # 不同的wal日志等级，写入内容会有所不同，做热备份建议replica以上，每个等级都会有其短板，比如replica物理备份，会因为主备速度差异，导致备库失败，需要配置其他参数，logical重放备份又可能有冲突的可能
     fsync = on # 是否对wal的写入需要更新到磁盘，但何时真的更新对应的文件系统的元数据和数据本身这个需要设置wal_sync_method
     synchronous_commit = on # 事务提交是否需要等待wal写入磁盘或者已经同步给备库
     wal_sync_method = fsync # 可以根据操作系统提供的API作为参考，比如linux上fsync要阻塞在同步文件系统元数据和数据本身，而fdatasync只在必要时更新文件系统元数据，虽然两者都能绕过操作系统的高速缓冲，但后者少了一些io操作自然快。如果有必要还需要强制禁用磁盘驱动器的写缓存，但是性能就不行了，所以需要在安全和性能做出平衡，详细可以看文档和了解文件系统如何保证写入安全性
-    
-    
+    full_page_writes = on # 检查点之后就把每个被修改过的完整的页数据（postgresql定义的）都写到wal里，这样就有了起始点，方便完整的恢复，避免只有行级变更带来多次污染
+    wall_compression = off # 日志压缩
+    wal_buffers = -1 # wal日志在共享缓冲里的大小 -1表示自动选
+    wal_writer_delay = 200ms # wal刷到磁盘的周期（毫秒），否则写入共享缓冲
+    wal_writer_flush_after = 1MB # 到达指定大小就写入磁盘，否则写入共享缓冲，设置为0就会立刻刷到磁盘
+    commit_delay = 0 # 提交延迟时间内允多事务同时通过一个wal刷到磁盘, 0为立刻写入磁盘
+    commit_siblings = 5 # 提交延迟里的最大事务数
 
+    # 12.检查点
+    checkpoint_timeout = 5min # wal日志检查点的间隔时间，到了检查点就会根据wal大小删除wal或者重用
+    checkpoint_flush_after = 256kB # 到达wal检查点时，需要把postgresql的共享缓存里的全部脏页都刷到磁盘，并在wal上标记该检查点，如果这段时间写入的数据超过配置的大小就让操作系统提前刷postgresql的共享缓冲里的脏页到磁盘，避免之后io峰值过高，大小为0-2mb
+    max_wal_size = 1GB # 检查点间隔内的wal最大值，但到达未必删
+    min_wal_size = 80MB # 检查点间隔内的wal最小值，小于该值就回收
+
+    # 13.复制wal到后备服务器
+    
     ```
 
 ## 简单运维
