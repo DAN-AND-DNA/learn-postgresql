@@ -191,8 +191,73 @@
     min_wal_size = 80MB # 检查点间隔内的wal最小值，小于该值就回收
 
     # 13.复制wal到后备服务器
+    max_wal_senders = 10 # 最大wal发送进程数
+    max_keep_segments = 0 # 保留的wal数量，可以保证备库不容易因为主日志被覆盖而导致同步失败，总大小可以通过wal的大小评估
+    wal_sender_timeout = 60 # 发送超时，直接中断后备服务，当然同步和异步最好配置不同的大小
     
+    # 14.主服务器
+    synchronouse_standby_names = 'hostname1,hostname2' # 同步备库的域名和更新策略，具体配置请参考文档，还有一个参数synchronous_commit表示事务同步的形式，其中选项remote_write代表备库写入内存就返回成功，然后主库等待提交的事务就算提交成功了
+    vaccum_defer_cleanup_age = 0 # 该参数代表要推迟清理的事务数量，推迟主库上事务的清理可以避免备库因为更新延迟的问题导致查询备库时发生冲突
+
+    # 15.后备服务器（针对后备服务器）
+    primary_conninfo = '主库的角色名 主库的角色口令 ssl相关选项 host=主服务器的hostname或ip port=主服务器的端口' # 后备服务器和主服务器的握手信息
+    hot_standy = on # 备库是否提供只读服务
+    max_standy_streaming_delay = 30s # 备库流复制wal时，因为同步延迟导致查询发生冲突，所以需要对备库的的每个查询进行一定延迟，这个时间代表所有查询的的延迟时间，否则取消该查询
+    wal_receiver_status_interval = 10s # 发送wal复制情况给主服务器的周期
+    wal_receiver_timeout = 60s  # 后备服务器判断主服务器超时时间
+    wal_retrieve_retry_interval = 5s # 重试尝试获取wal的周期
+
+    # 16.查询优化
+    TODO
+
+    # 17.错误日志
+    log_destination = 'stderr' # 日志目的地  可以同时选stderr csvlog syslog  windows上的eventlog
+    logging_collector = off # 日志是否落地
+    log_directory = 'log' # 日志落地目录，可以是相对目录（数据存储目录），也可以是绝对路径
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # 日志命名
+    log_rotation_age = 1d # 日志轮转周期 0为禁止
+    log_rotation_size = 10MB # 日志轮转大小 0为禁止
+    log_min_messages = warning # 日志错误等级
+    log_min_error_statement = error # 记录SQL语句的错误等级
+    log_min_duration_statement = -1 # 记录达到指定时间的SQL语句，可以检出慢查询， -1代表关闭
+    debug_print_parse = off # 打印调试信息
+    debug_print_rewritten = off # 打印调试信息
+    debug_print_plan = off # 打印调试信息
+    log_checkpoints = off # 记录检查点和重启点以及一些时间统计
+    log_connections = off # 记录连接信息
+    log_disconnections = off # 记录断开连接信息
+    log_duration = off # 记录语句完成时间
+    log_line_prefix = '%m [%p] ' # 每个日志行开头包含的内容，详细内容参考文档
+    log_lock_waits = off # 会话等待锁已超过deadlock_timeout，是否要产生一条日志
+    log_statement = none # 记录何种SQL ddl为数据定义 mod为ddl all为全部
+    
+    # 18.运行时统计 （通过pg_stat_*视图）
+    track_activities = on # 打开对每个会话的统计
+    track_activity_query_size = 1024 # pg_stat_activity.query域的内存大小
+    track_counts = on # 打开对每个数据库的统计
+    stats_temp_directory = 'pg_stat_tmp' # 统计的临时目录 可以是相对目录（数据存储目录），也可以是绝对路径
+    log_statement_stats = off # 对语句进行统计
+
+    # 19.自动清理 (表的选项覆盖可以其中一些选项，请参考文档)
+    autovacuum = on # 还需开启 track_counts选项
+    log_autovacuum_min_duration = -1 # 记录清理时间达到指定时间 -1为禁用
+    # TOOD
+
+    # 20 客户端连接
+    client_min_messages = notice # 发给客户端的消息等级
+    statement_timeout = 0 # SQL执行超时
+    lock_timeout = 0 # 等锁超时
+
+    # 21.锁
+    deadlock_timeout = 1s # 超过该时间就开始检查死锁
+    max_locks_per_transaction = 64 # 每个事务的最大对象锁
     ```
+
+- 这里简单介绍linux下的pg_hba.conf的一些常用设置项，完整内容或不同平台的请见[文档](http://www.postgres.cn/docs/12/auth-pg-hba-conf.html)：
+    ```sh
+    # TODO
+    ```
+
 
 ## 简单运维
 
