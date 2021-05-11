@@ -7,10 +7,11 @@
     - [centos7](#centos7)
     - [systemd](#systemd)
     - [archlinux](#archlinux)
-- [配置详解](#配置详解)
-    - [pg_hba.conf](#pg_hbd.conf)
+- [配置](#配置)
+    - [postgresql.conf](#postgresql.conf)
+    - [pg_hba.conf](#pg_hba.conf)
 - [命令](#命令)
-- [sql](#sql)
+- [概念简介和SQL](#概念简介和SQL)
     - [角色](#角色)
     - [数据库](#数据库)
 - [简单运维](#简单运维)
@@ -107,10 +108,11 @@
     ```sh
     # TODO
     ```
-## 配置详解
+## 配置
 - 上面安装时指定的环境变量PGDATA或者-D后的目录叫做数据存储目录，默认情况下，数据存储目录中有三个配置，分别是主服务器配置postgresql.conf，认证配置pg_hba.conf，用户名称映射配置pg_ident.conf
 - 实际上，数据存储目录和各配置的位置可以单独指定，比如可以通过环境变量PGDATA或-D来指定主服务配置的位置，并在主服务配置中包含其他配置（hba_file，ident_file）和数据存储目录的位置（data_directory），当然还有其他方法，可以参考[此处](http://www.postgres.cn/docs/12/runtime-config-file-locations.html)
 
+## postgresql.conf
 - 这里简单介绍linux下的postgresql.conf的一些常用设置项，完整内容或不同平台的请见[文档](http://www.postgres.cn/docs/12/runtime-config-connection.html)：
     ```sh
     # 1.位置
@@ -211,7 +213,7 @@
     TODO
 
     # 17.错误日志
-    log_destination = 'stderr' # 日志目的地  可以同时选stderr csvlog syslog  windows上的eventlog
+    log_destination = 'stderr' # 日志目的地 可以同时选stderr csvlog syslog eventlog(windows)
     logging_collector = off # 日志是否落地
     log_directory = 'log' # 日志落地目录，可以是相对目录（数据存储目录），也可以是绝对路径
     log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # 日志命名
@@ -243,7 +245,7 @@
     log_autovacuum_min_duration = -1 # 记录清理时间达到指定时间 -1为禁用
     # TOOD
 
-    # 20 客户端连接
+    # 20.客户端连接
     client_min_messages = notice # 发给客户端的消息等级
     statement_timeout = 0 # SQL执行超时
     lock_timeout = 0 # 等锁超时
@@ -252,11 +254,50 @@
     deadlock_timeout = 1s # 超过该时间就开始检查死锁
     max_locks_per_transaction = 64 # 每个事务的最大对象锁
     ```
-
+## pg_hbd.conf
 - 这里简单介绍linux下的pg_hba.conf的一些常用设置项，完整内容或不同平台的请见[文档](http://www.postgres.cn/docs/12/auth-pg-hba-conf.html)：
     ```sh
-    # TODO
+    # postgresql里的role和user基本一样，只是有没有默认的login权限罢了
+
+    #连接类型                       #database                      #user    #address       #auth-method
+    local # 匹配unix套接字          all # 匹配全部                           192.168.1.7    reject
+    host # 匹配ssl或普通连接        sameuser # 匹配user同名的数据库           192.168.1.0/24 trust
+    hostssl # 匹配ssl加密的连接     samerole # 匹配role同名的数据库           0.0.0.0/0      md5      
+    hostnossl # 匹配无ssl加密的连接                                          ::0/0          password #明文
+
     ```
+## 概念简介和SQL
+
+## 角色
+- postgresl初始化后会有唯一一个可登录的角色，其他为权限相关的角色，即postgres，这个角色是超级用户，该角色可以创建其他角色，其中postgresql里的角色和用户是没有区别的，除了用户是默认具有登录权限的，且两者都属于全局范围：
+    ```sh
+    SELECT * FROM pg_roles; # 查询全部角色
+    \du # 查询全部角色 # psql 
+    CREATE ROLE xxxx; # 创建角色 （无法登录）
+    CREATE ROLE xxxx LOGIN; # 创建角色 （可登录）
+    CREATE USER xxxx; # 创建用户 （可登录）
+    psql -U xxxx # 登录 # psql
+    ```
+
+- 角色需要赋权才能正常使用，可以在创建的时候加也可以之后追加：
+    ```sh
+    CREATE ROLE xxxx SUPERUSER; # 超级用户自动拥有以下权限
+    CREATE ROLE xxxx CREATEDB; # 创建数据库
+    CREATE ROLE xxxx CREATEROLE; # 创建，修改，删除角色属性
+    CREATE ROLE xxxx REPLICATION LOGIN; # 流复制
+    CREATE ROLE xxxx PASSWORD 'password' # 登录密码
+    ```
+- 在角色上可能会产生大量对象关系（比如创建了表），所以删除角色的的时候需要转移这些古旧的对象给其他角色或者直接删除，直接DROP会提示需要转移。建议将业务角色限制在同一个数据库中（不给创建数据库的权限），否则转移的时候会需要在每个有该角色的数据库进行转移：
+    ```sh
+    REASSIGN OWNERD BY xxxx TO yyyy;  # 每个有该角色的数据库
+    DROP OWNER BY xxxx; # 每个有该角色的数据库
+
+    DROP ROLE xxxx; # 全局
+    ```
+
+## 组
+    TODO
+
 
 
 ## 简单运维
