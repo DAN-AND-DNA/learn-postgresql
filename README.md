@@ -50,6 +50,7 @@
     sudo systemctl disable firewalld;
     sudo setenforce 0;
     sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config;
+    sudo swapoff -a
     ```
 - 打开[官方地址](https://ftp.postgresql.org/pub/source/)，下载12的源代码（最新版本）：
     ```sh
@@ -141,7 +142,7 @@
 
     # 3.认证
     authentication_timeout = 60 # 客户端握手超时时间（秒）
-    password_encryption = md5 # 对role的密码的加密算法
+    password_encryption = md5 # 对角色密码的加密算法
 
     # 4.SSL
     ssl = off # 取消ssl认证
@@ -240,7 +241,7 @@
     log_duration = off # 记录语句完成时间
     log_line_prefix = '%m [%p] ' # 每个日志行开头包含的内容，详细内容参考文档
     log_lock_waits = off # 会话等待锁已超过deadlock_timeout，是否要产生一条日志
-    log_statement = none # 记录何种SQL ddl为数据定义 mod为ddl all为全部
+    log_statement = none # 记录何种SQL 可以是none ddl（数据定义语句） mod（包含ddl和修改操作）all为全部
     
     # 18.运行时统计 （通过pg_stat_*视图）
     track_activities = on # 打开对每个会话的统计
@@ -323,7 +324,7 @@
     DROP DATABASE name; # 删除数据库
     ```
 - 可以在pg_hba.conf里配置对角色和数据库的访问进行限制，比如添加如下内容，在内部网络对可信租户的应用进行隔离：
-    ```
+    ```sh
     host    samerole    xxx    192.168.1.0/24      md5      #通过普通的tcp连接访问登录角色同名的数据库
     ```
 
@@ -334,10 +335,15 @@
     ALTER DATABASE xxx RESET yyy； # 还原
     ```
     
-
-## 组
-    TODO
-
+## 表空间
+- 表空间代表实际底层文件系统在postgresql里的映射，可以把postgresql里的对象（数据库，表，索引）单独分配在不同的表空间，完成数据分区间迁移、粗颗粒负载均衡和io性能优化等操作：
+    ```sh
+    CREATE TABLESPACE yyy LOCATION '/data1/pg_data'; # 创建表空间
+    CREATE DATABASE xxx OWNER xxx TABLESPACE yyy; # 分配数据库表空间
+    DROP TABLESPACE yyy # 删除表空间
+    ```
+- 若数据库分配在某个表空间里，那在该数据库里创建的对象默认就会分配在对应的表空间里面，其中包括表，索引，临时表之类
+- 详细内容可以参考[CREATE TABLESAPCE](http://www.postgres.cn/docs/12/sql-createtablespace.html)
 
 
 ## 简单运维
