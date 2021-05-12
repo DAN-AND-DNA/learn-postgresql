@@ -14,6 +14,7 @@
 - [概念简介和SQL](#概念简介和SQL)
     - [角色](#角色)
     - [数据库](#数据库)
+    - [表空间](#表空间)
 - [简单运维](#简单运维)
     - [冷备份](#冷备份)
     - [热备份](#热备份)
@@ -111,6 +112,14 @@
 ## 配置
 - 上面安装时指定的环境变量PGDATA或者-D后的目录叫做数据存储目录，默认情况下，数据存储目录中有三个配置，分别是主服务器配置postgresql.conf，认证配置pg_hba.conf，用户名称映射配置pg_ident.conf
 - 实际上，数据存储目录和各配置的位置可以单独指定，比如可以通过环境变量PGDATA或-D来指定主服务配置的位置，并在主服务配置中包含其他配置（hba_file，ident_file）和数据存储目录的位置（data_directory），当然还有其他方法，可以参考[此处](http://www.postgres.cn/docs/12/runtime-config-file-locations.html)
+- 视图[pg_settings](http://www.postgres.cn/docs/12/view-pg-settings.html)里有对运行时参数的介绍，通过context列可以知道参数生效策略，这里简单说下：
+    ```sh
+    internal # 无法直接修改，需要重新初始化数据库
+    postmaster # 需重启
+    sighup # 需reload
+    user # 当前会话
+    ```
+- 比如，[ALTER SYSTEM](http://www.postgres.cn/docs/12/sql-altersystem.html)和postgresql.conf可以修改全局配置，其中的一部分参数可以在修改后直接通pg_ctl reload来生效，还有一小部分在服务器启动后就不能变更，除非重启服务器比如listen_addresses（监听ip），但大部分是可以实时修改的，其中又分新对话生效和当前对话生效，前者可以用[ALTER DATABASE](http://www.postgres.cn/docs/12/sql-alterdatabase.html)和[ALTER ROLE](http://www.postgres.cn/docs/12/sql-alterrole.html)在设置之后的新的对话里生效，在局部范围内覆盖全局设置，后者可以通过[SET](http://www.postgres.cn/docs/12/sql-set.html)修改当前会话的配置以覆盖全局设置
 
 ## postgresql.conf
 - 这里简单介绍linux下的postgresql.conf的一些常用设置项，完整内容或不同平台的请见[文档](http://www.postgres.cn/docs/12/runtime-config-connection.html)：
@@ -254,7 +263,7 @@
     deadlock_timeout = 1s # 超过该时间就开始检查死锁
     max_locks_per_transaction = 64 # 每个事务的最大对象锁
     ```
-## pg_hbd.conf
+## pg_hba.conf
 - 这里简单介绍linux下的pg_hba.conf的一些常用设置项，完整内容或不同平台的请见[文档](http://www.postgres.cn/docs/12/auth-pg-hba-conf.html)：
     ```sh
     # postgresql里的role和user基本一样，只是有没有默认的login权限罢了
@@ -268,8 +277,21 @@
     ```
 ## 概念简介和SQL
 
+
 ## 角色
-- postgresl初始化后会有唯一一个可登录的角色，其他为权限相关的角色，即postgres，这个角色是超级用户，该角色可以创建其他角色，其中postgresql里的角色和用户是没有区别的，除了用户是默认具有登录权限的，且两者都属于全局范围：
+- 从视图pg_roles里可以查询到很多角色，其中postgres是postgresl初始化后会有唯一一个可登录的角色，，这个角色是超级用户，其他为默认权限相关的角色（组角色）具体说明参考[文档](http://www.postgres.cn/docs/12/default-roles.html)：
+    ``` sh
+    pg_read_all_settings  # 可以访问所有的配置变量
+    pg_read_all_stats     # 可以访问所有的pg_stat_*统计视图 
+    pg_stat_scan_tables   # 可以执行监控函数
+    pg_monitor            # 可以访问监控视图和函数
+    pg_signal_backend     # 可以发信号中断会话的请求或者会话本身
+    pg_read_server_files  # 可以读任意文件
+    pg_write_server_files # 可以写任意文件
+    pg_execute_server_program # 执行程序
+    ```
+
+- postgres可以创建其他角色，其中postgresql里的角色和用户是没有区别的，除了用户是默认具有登录权限的，且两者都属于全局范围：
     ```sh
     SELECT * FROM pg_roles; # 查询全部角色
     \du # 查询全部角色 # psql 
@@ -279,7 +301,7 @@
     psql -U xxxx # 登录 # psql
     ```
 
-- 角色需要赋权才能正常使用，可以在创建的时候加也可以之后追加：
+- 角色需要赋权才能正常使用，可以在创建的时候赋权也可以之后追加：
     ```sh
     CREATE ROLE xxxx SUPERUSER; # 超级用户自动拥有以下权限
     CREATE ROLE xxxx CREATEDB; # 创建数据库
@@ -287,13 +309,31 @@
     CREATE ROLE xxxx REPLICATION LOGIN; # 流复制
     CREATE ROLE xxxx PASSWORD 'password' # 登录密码
     ```
-- 在角色上可能会产生大量对象关系（比如创建了表），所以删除角色的的时候需要转移这些古旧的对象给其他角色或者直接删除，直接DROP会提示需要转移。建议将业务角色限制在同一个数据库中（不给创建数据库的权限），否则转移的时候会需要在每个有该角色的数据库进行转移：
+- 一个角色上可能绑定有大量对象关系（比如同名数据库），所以删除角色的的时候需要转移这些古旧的对象给其他角色或者直接删除，直接DROP会提示需要转移。建议将业务角色限制在同一个数据库中（不给创建数据库的权限），否则转移的时候会需要在每个有该角色的数据库进行转移：
     ```sh
     REASSIGN OWNERD BY xxxx TO yyyy;  # 每个有该角色的数据库
     DROP OWNER BY xxxx; # 每个有该角色的数据库
 
     DROP ROLE xxxx; # 全局
     ```
+## 数据库
+- 从表pg_database里可以查询所有的数据库，初始化成功后会默认创建1个postgres表（如果postgres作为初始用户），2个模板数据库（template0和template1），其中postgres是直接从template1拷贝而来。数据库属于postgresql逻辑中的最高层，单个服务器实例可以管理多个数据库，但应用的每个连接只能单次访问其中一个数据库，所以不同的数据库可以提供给多个不同项目作为物理上的隔离。创建的sql语句可以参考[文档](http://www.postgres.cn/docs/12/sql-createdatabase.html)，删除数据库的时候需要是拥有者或超级用户，而且不能处于要删的数据库里，不然会报错：
+    ```sh
+    CREATE DATABASE xxx OWNER xxx; # 为角色创建数据库
+    DROP DATABASE name; # 删除数据库
+    ```
+- 可以在pg_hba.conf里配置对角色和数据库的访问进行限制，比如添加如下内容，在内部网络对可信租户的应用进行隔离：
+    ```
+    host    samerole    xxx    192.168.1.0/24      md5      #通过普通的tcp连接访问登录角色同名的数据库
+    ```
+
+- 可以在创建数据库的时候指定一个模板数据库，这个模板数据库可以包含你自定义的函数和数据，也可以是默认的template1，但一般不会使用template0作为模板数据库，因为不包含一些必要的配置和数据，原因请参见[文档](http://www.postgres.cn/docs/12/manage-ag-templatedbs.html)
+- 可以通过系统视图[pg_settings](http://www.postgres.cn/docs/12/view-pg-settings.html)或SHOW ALL找到会话级别的参数，通过如下sql语句修改在数据库范围的会话配置：
+    ```sh
+    ALTER DATABASE xxx SET yyy TO off; # 修改
+    ALTER DATABASE xxx RESET yyy； # 还原
+    ```
+    
 
 ## 组
     TODO
