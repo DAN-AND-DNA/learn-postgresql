@@ -16,6 +16,7 @@
     - [数据库](#数据库)
     - [表空间](#表空间)
 - [简单运维](#简单运维)
+    - [跨版本迁移](#跨版本迁移)
     - [冷备份](#冷备份)
     - [热备份](#热备份)
     - [raid10](#raid10)
@@ -328,7 +329,11 @@
     host    samerole    xxx    192.168.1.0/24      md5      #通过普通的tcp连接访问登录角色同名的数据库
     ```
 
-- 可以在创建数据库的时候指定一个模板数据库，这个模板数据库可以包含你自定义的函数和数据，也可以是默认的template1，但一般不会使用template0作为模板数据库，因为不包含一些必要的配置和数据，原因请参见[文档](http://www.postgres.cn/docs/12/manage-ag-templatedbs.html)
+- 可以在创建数据库的时候指定一个模板数据库，这个模板数据库可以包含你自定义的函数和数据，也可以是默认的template1，但一般不会使用template0作为模板数据库，因为不包含一些必要的配置和数据，原因请参见[文档](http://www.postgres.cn/docs/12/manage-ag-templatedbs.html)：
+    ```sh
+    CREATE DATABASE xxx OWNER xxx TEMPLATE template1;
+    ```
+
 - 可以通过系统视图[pg_settings](http://www.postgres.cn/docs/12/view-pg-settings.html)或SHOW ALL找到会话级别的参数，通过如下sql语句修改在数据库范围的会话配置：
     ```sh
     ALTER DATABASE xxx SET yyy TO off; # 修改
@@ -347,5 +352,16 @@
 
 
 ## 简单运维
-
 - 之所以叫简单运维呢，因为适合强度低的项目日常使用和维护。
+
+## SQL转储
+- postgresql的大版本升级往往需要使用自带工具来迁移数据，相对比较复杂，但是如果使用SQL转储，可以减少很多复杂的操作，[SQL转储](http://www.postgres.cn/docs/12/app-pgdump.html)可以使用pg_dump备份一个数据库而不阻塞其他用户访问数据库，需要注意的是postgresql里的很多工具默认用的角色名都是系统用户名，可以用-U来指定角色名，并指定权限范围内的数据库名（超级用户可以无视权限校验）：
+    ```sh
+    pg_dump -U xxx xxx > dumpfile
+    ```
+- 从上面的命令得到的dumpfile（实际上是通过把标准输出重定向到某个文件名）就是个都是普通的文本，里面的内容主要是当前数据库里表和数据的一个快照，但不涉及数据库和表空间的创建和指定，如果需要全部的对象，或者有一些定制选择可以考虑[pg_dumpall](http://www.postgres.cn/docs/12/app-pg-dumpall.html) ，所以pg_dump产生的转储在恢复上面就变得宽松，可以通过如下方式恢复：
+    ```sh
+    CREATE DATABASE xxx OWNER xxx TEMPLATE template0; # 新建
+    psql -U xxx --single-transaction --set ON_ERROR_STOP=on xxx < dumpfile # 导入
+    ```
+ - 上面因为转储的内容是对比模板数据库template0的差别而产生的，并且不涉及数据库和表空间的创建，所以还原的起点应该是依据template0新创建一个数据库，然后给这个库导入数据，详细过程可以参考[文档](http://www.postgres.cn/docs/12/backup-dump.html)
