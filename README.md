@@ -19,6 +19,7 @@
 - [简单运维](#简单运维)
     - [SQL转储备份](#SQL转储备份)
     - [停机拷贝备份](#停机拷贝备份)
+    - [基础备份（可并发）](#基础备份（可并发）)
     - [冷备份](#冷备份)
     - [热备份](#热备份)
     - [raid10](#raid10)
@@ -273,10 +274,10 @@
     # postgresql里的role和user基本一样，只是有没有默认的login权限罢了
 
     #连接类型                       #database                      #user    #address       #auth-method
-    local # 匹配unix套接字          all # 匹配全部                           192.168.1.7    reject
-    host # 匹配ssl或普通连接        sameuser # 匹配user同名的数据库           192.168.1.0/24 trust
-    hostssl # 匹配ssl加密的连接     samerole # 匹配role同名的数据库           0.0.0.0/0      md5      
-    hostnossl # 匹配无ssl加密的连接                                          ::0/0          password #明文
+    local # 匹配unix套接字          all # 匹配全部                  xxx      192.168.1.7    reject
+    host # 匹配ssl或普通连接        sameuser # 匹配user同名的数据库  xxx      192.168.1.0/24 trust
+    hostssl # 匹配ssl加密的连接     samerole # 匹配role同名的数据库  xxx      0.0.0.0/0      md5      
+    hostnossl # 匹配无ssl加密的连接 replication                     xxx      ::0/0          password #明文
 
     ```
 ## 概念简介和SQL
@@ -376,8 +377,80 @@
  ## 停机拷贝备份
  - 关停服务器，tar整个目录，直接复制到从源服务器拷贝到目标服务器，或者直接使用rsync和scp等系统工具，系统的文件系统也提供[快照功能](http://www.postgres.cn/docs/12/backup-file.html)
 
- ## 基于wal归档备份
- -
+ ## 基础备份（可并发）
+ - 如果观察过postgresql的pg_wal目录，就会发现里面的日志文件名字经常做变更，其实是被回收重用了，上面数据安全章节里有说过，wal日志可以帮助我们从崩溃中恢复，如果想在每次回收前保留这些wal文件可以这样：
+    ```sh
+    # postgresql.conf
 
- ## 基于wal的流复制
+    wal_level = replica # 日志模式
+    archive_mode = on  # 打开归档
+    archive_command = 'test ! -f /data/pg_arch/%f && cp %p /data/pg_arch/%f' # 本地拷贝
+    ```
 
+- 配置了上述参数需要重启服务器，如果archive_command里的shell命令失败会一直重试，直到shell结果的$?环境变量为0，并保留pg_wal里日志不删除，如果archive_command为空字符串，亦不删除pg_wal里的日志（可以考虑在业务不繁忙的自己清理）
+- 有了上述不断被归档的日志文件，还需要做一个基础备份作为未来恢复时的起点，所谓基础备份就是当前数据库的一个快照， 打开一个新连接输入，但不要关闭该连接：
+    ```sh
+    SELECT pg_start_backup('label', false, false); # 这个命令的意思是启动一次备份，label是识别本次备份的标签
+    ```
+- 上面的命令返回就可以把整个数据存储目录用tar打包起来，这个命令发起了一次检查点来把内存里数据刷到磁盘也包括正在使用的wal文件，也被落地到磁盘了，并开启备份期的新的wal，备份期间的事务内容都会写在这些wal上
+- 等上面的tar命令结束就可以在刚才的连接输入如下内容：
+    ```sh
+    SELECT * FROM pg_stop_backup(false);
+    ```
+- 上面的命令会返回备份期wal的信息，对这些备份期间的wal进行归档，并切换到新的wal，上面就完成了基础备份
+- 下面在其他地方恢复，对基础备份进行解压并在目录里创建recovery.signal：
+    ```sh
+    # postgresql.conf
+
+    wal_level = replica # 日志模式 （可选）
+    archive_mode = off  # 打开归档 （可选）
+    archive_command = '' # 本地拷贝 （可选）
+    restore_command = 'cp /data/pg_arch/%f "%p"' #
+    ```
+- 启动服务器，一般来说会正常启动，如果发生问题请参考[这里](http://www.postgres.cn/docs/12/continuous-archiving.html)
+
+## 基于wal文件复制的后备机
+- 基础备份过程同上文，对基础备份解压并创建standby.signal文件，差别就是wal归档的目录，可以考虑让主服务器发送归档到后备机的某个目录上，比如下文的（/data/remote_pg_arch），后备的配置如下：
+    ```sh
+    # postgresql.conf
+
+    wal_level = replica # 日志模式 （可选）
+    archive_mode = off  # 打开归档 （可选）
+    archive_command = '' # 本地拷贝 （可选）
+    restore_command = 'cp /dataremote_pg_arch/%f %p'
+    archive_cleanup_command = 'pg_archivecleanup /data/remote_pg_arch %r' # 清理无用wal
+    ```
+- 基于wal文件复制的后备机，对数据库的消耗非常小，速度自然很优秀，但容易因为归档的延迟导致主服务器奔溃时后备机数据落后很多，主备切换时还需手动干预
+
+## 基于wal流复制后备机
+- 流复制默认是异步的，需要在主服务器配置wal_keep_segments防止wal不被过早清理和重用，否则会导致后备失败，主服务器操作和配置如下：
+    ```sh
+    CREATE ROLE xxxx REPLICATION LOGIN PASSWORD 'yyyy'; # 用户需要流复制权限
+
+    # pg_hba.conf
+
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    host    replication     xxxx            192.168.1.0/24          md5
+
+    # postgresql.conf
+
+    wal_keep_segments = 20
+    ```
+
+- 如果需要主服务器进行同步复制可以参考[这里](http://www.postgres.cn/docs/12/warm-standby.html#SYNCHRONOUS-REPLICATION)进行配置：
+    ```sh
+    # postgresql.conf
+
+    synchronous_standby_names = 'hostname' # 备库的host或者ip
+    synchronous_commit = 'remote_write'
+    ```
+
+- 基础备份过程同上文，对基础备份解压并创建standby.signal文件，备库的配置如下：
+    ```sh
+    # postgresql.conf
+
+    primary_conninfo = 'host=192.168.1.37 port=5432 user=xxxx password=yyyy' # 假设主服务器在192.168.1.37
+    wal_level = replica # 日志模式 （可选）
+    archive_mode = off  # 打开归档 （可选）
+    archive_command = '' # 本地拷贝 （可选）
+    ```
