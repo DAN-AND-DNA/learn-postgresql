@@ -369,7 +369,7 @@
  - 因为转储的内容是对比模板数据库template0的差别而产生的，并且不涉及数据库和表空间的创建，所以还原的起点应该是依据template0新创建一个数据库，然后给这个库导入数据，详细过程可以参考[文档](http://www.postgres.cn/docs/12/backup-dump.html)
 
  ## 停机冷备份
- - 关停服务器，tar整个目录，直接复制到从源服务器拷贝到目标服务器，或者直接使用rsync和scp等系统工具，系统的文件系统也提供[快照功能](http://www.postgres.cn/docs/12/backup-file.html)
+ - 关停服务器，tar整个目录，从源服务器拷贝到目标服务器或者直接使用rsync和scp等系统工具，文件系统也提供[快照功能](http://www.postgres.cn/docs/12/backup-file.html)
 
  ## 基础热备份（可并发）
  - 如果观察过postgresql的pg_wal目录，就会发现里面的日志文件名字经常做变更，其实是被回收重用了，上面数据安全章节里有说过，wal日志可以帮助我们从崩溃中恢复，如果想在每次回收前保留这些wal文件可以这样：
@@ -386,12 +386,12 @@
     ```sh
     SELECT pg_start_backup('label', false, false); # 这个命令的意思是启动一次备份，label是识别本次备份的标签
     ```
-- 上面的命令返回就可以把整个数据存储目录用tar打包起来，这个命令发起了一次检查点来把内存里数据刷到磁盘也包括正在使用的wal文件，也被落地到磁盘了，并开启备份期的新的wal，备份期间的事务内容都会写在这些wal上
+- 等上面的命令返回后就可以把整个数据存储目录用tar打包起来，这个命令实际上发起了一次[检查点](http://postgres.cn/docs/12/wal-configuration.html)来把内存里数据都刷到磁盘，还创建备份期的新wal，检查点的位置实际就写在这些新wal中
 - 等上面的tar命令结束就可以在刚才的连接输入如下内容：
     ```sh
     SELECT * FROM pg_stop_backup(false);
     ```
-- 上面的命令会返回备份期wal的信息，对这些备份期间的wal进行归档，并切换到新的wal，上面就完成了基础备份
+- 上面的命令会返回备份期wal的信息，并在备份结束的时候，在pg_wal目录里添加了一个backup文件表示备份期间wal清单，包括开始的wal位置、结束的wal位置和检查点的位置，并对这些备份期间的新wal进行了归档，最后切换到新的wal，上面就完成了基础备份
 - 下面在其他地方恢复，对基础备份进行解压并在目录里创建recovery.signal：
     ```sh
     # postgresql.conf
@@ -414,7 +414,7 @@
     restore_command = 'cp /dataremote_pg_arch/%f %p'
     archive_cleanup_command = 'pg_archivecleanup /data/remote_pg_arch %r' # 清理无用wal
     ```
-- 基于wal文件复制的后备机，对数据库的消耗非常小，速度自然很优秀，但容易因为归档的延迟导致主服务器奔溃时后备机数据落后很多，主备切换时还需手动干预
+- 基于wal文件复制的后备机，对数据库的消耗非常小，速度自然很优秀，但容易因为归档的延迟导致后备机在主服务器奔溃时落后，届时主备切换需手动干预，保证数据进度一致
 
 ## 基于wal流复制的后备机
 - 流复制默认是异步的，需要在主服务器配置wal_keep_segments防止wal不被过早清理和重用避免导致后备失败，如果有必要需要拷贝主服务器的wal归档到后备服务器，主服务器操作和配置如下：
