@@ -7,6 +7,7 @@
     - [centos7](#centos7)
     - [systemd](#systemd)
     - [archlinux](#archlinux)
+- [目录](#目录)
 - [配置](#配置)
     - [postgresql.conf](#postgresql.conf)
     - [pg_hba.conf](#pg_hba.conf)
@@ -19,7 +20,7 @@
     - [分区](#分区)
     - [索引](#索引)
     - [增删改查](#增删改查)
-    - [优化](#优化)
+    - [SQL优化](#SQL优化)
 - [数据安全](#数据安全)
 - [简单运维](#简单运维)
     - [SQL转储备份](#SQL转储备份)
@@ -31,6 +32,7 @@
     - [golang](#golang)
 - [监控和基准测试](#监控和基准测试)
 - [内核参数](#内核参数)
+- [内部原理和源代码分析](#内部实现和源代码分析)
 
 ## 为什么是postgresql
 
@@ -108,6 +110,8 @@
     ```sh
     # TODO
     ```
+## 目录
+[d](http://postgres.cn/docs/12/storage-file-layout.html)
 ## 配置
 - 上面安装时指定的环境变量PGDATA或者-D后的目录叫做数据存储目录，默认情况下，数据存储目录中有三个配置，分别是主服务器配置postgresql.conf，认证配置pg_hba.conf，用户名称映射配置pg_ident.conf
 - 实际上，数据存储目录和各配置的位置可以单独指定，比如可以通过环境变量PGDATA或-D来指定主服务配置的位置，并在主服务配置中包含其他配置（hba_file，ident_file）和数据存储目录的位置（data_directory），当然还有其他方法，可以参考[此处](http://www.postgres.cn/docs/12/runtime-config-file-locations.html)
@@ -402,7 +406,7 @@ SELECT date '2021-05-15';  # 2021-05-15
 
 ## 表
 
-## 优化
+## SQL优化
 - [sql优化](http://postgres.cn/docs/12/performance-tips.html)
 
 ## 数据安全
@@ -511,3 +515,6 @@ SELECT date '2021-05-15';  # 2021-05-15
 - [锁](http://postgres.cn/docs/12/view-pg-locks.html)
 - [pg_bench](http://postgres.cn/docs/12/pgbench.html)
 - [pg_stat_statements](http://postgres.cn/docs/12/pgstatstatements.html)
+
+
+## 内部实现和源代码分析
