@@ -10,11 +10,16 @@
 - [配置](#配置)
     - [postgresql.conf](#postgresql.conf)
     - [pg_hba.conf](#pg_hba.conf)
-- [命令](#命令)
 - [概念简介和SQL](#概念简介和SQL)
     - [角色](#角色)
     - [数据库](#数据库)
     - [表空间](#表空间)
+    - [类型转换](#类型转换)
+    - [常用数据类型](#常用数据类型)
+    - [分区](#分区)
+    - [索引](#索引)
+    - [增删改查](#增删改查)
+    - [优化](#优化)
 - [数据安全](#数据安全)
 - [简单运维](#简单运维)
     - [SQL转储备份](#SQL转储备份)
@@ -23,14 +28,8 @@
     - [基于wal文件复制的后备机](#基于wal文件复制的后备机)
     - [基于wal流复制的后备机](#基于wal流复制的后备机)
 - [开发](#开发)
-    - [k8s](#k8s)
     - [golang](#golang)
-    - [c++](#c++)
-    - [lua](#lua)
-    - [rust](#rust)
-- [监控](#监控)
-    - [观测](#观测)
-    - [统计](#统计)
+- [监控和基准测试](#监控和基准测试)
 - [内核参数](#内核参数)
 
 ## 为什么是postgresql
@@ -73,6 +72,7 @@
     /data/pg_build/bin/pg_ctl -D /data/pg_data stop -m fast
     ```
 - 上面的initdb可以安全的重复调用，若目录已经存在则会调用失败，该目录可以用环境变量PGDATA代替
+- 更详细的内容可以参考[文档](http://postgres.cn/docs/12/install-procedure.html)
 ## systemd
 
 - 现代Linux上的systemd服务可以很方便的帮我们托管postgresql的主进程和子进程，并通过添加[环境变量](http://www.postgres.cn/docs/12/kernel-resources.html#LINUX-MEMORY-OVERCOMMIT)来改变子进程的行为：
@@ -347,6 +347,63 @@
 - 若数据库分配在某个表空间里，那在该数据库里创建的对象默认就会分配在对应的表空间里面，其中包括表，索引，临时表之类
 - 详细内容可以参考[CREATE TABLESAPCE](http://www.postgres.cn/docs/12/sql-createtablespace.html)
 
+## 类型转换
+
+-  请见[文档](http://www.postgres.cn/docs/12/sql-expressions.html#SQL-SYNTAX-TYPE-CASTS)
+
+## 常用数据类型
+
+    ```sh
+    名字                  存储尺寸        描述	            范围                                        
+    smallint	          2字节	        小范围整数          -32768 to +32767
+    integer         	  4字节	        整数的典型选择      -2147483648 to +2147483647
+    bigint  	          8字节	        大范围整数          -9223372036854775808 to +9223372036854775807
+    decimal	              可变	        用户指定精度，精确   最高小数点前131072位，以及小数点后16383位
+    numeric	              可变	        用户指定精度，精确   最高小数点前131072位，以及小数点后16383位
+    real	              4字节	        可变精度，不精确     6位十进制精度
+    double precision	  8字节	        可变精度，不精确     15位十进制精度
+    smallserial	          2字节	        自动增加的小整数     1到32767
+    serial	              4字节	        自动增加的整数       1到2147483647
+    bigserial	          8字节	        自动增长的大整数     1到9223372036854775807
+    character varying     有限制的变长                      最大1G
+    character             定长，空格填充                    最大1G
+    text	              无限变长，被压缩                  
+    ```
+
+- smallint（int2），integer（int，int4），bigint（int8）是可用的整数类型，算术运算快
+- numeric，deciaml是任意精度数字，实际使用是形如numeric(m, n)，其中m为精度，即总位数，n为标度，即小数点后的位数，可以保证数据精度和计算准确，但是算术运算慢，可以支持字符串NaN（非数字）
+- real（float4），double precision（float，float8）是浮点类型，不准确，可以支持字符串Infinity，-Infinity，NaN（非数字）
+- character varying（varchar），character（char），text是字符类型，字符类型在postgresql都会被压缩，实际使用是形如character varying(n)来表示上限为n个字符，只存储实际长度的字符串，最大1G。character(n)来表示上限为n个字符，多余位置被空格填充，不填为1个字符串长度，最大1G。text不限制大小，等价于character varying不填n，无大小限制，性能上是character varying和text最快。
+
+```sh
+名字	                                存储尺寸	描述
+timestamp [ (p) ] [ without time zone ]	8字节	日期+一天中时间（无时区）
+timestamp [ (p) ] with time zone	    8字节	日期+一天中时间（有时区）
+date	                                4字节	日期（无时间）
+time [ (p) ] [ without time zone ]	    8字节	一天中的时间（无日期）
+time [ (p) ] with time zone	            12字节	一天中的时间（无日期），带有时区
+```
+- 上表中日期和时间的类型，timestamp用于表示时间和日期，date只表示日期，time只表示时间，p表示秒后面的小数点位数（0到6），实际使用是形如：
+```sh
+# timestamp
+SELECT timestamp '2021-05-15 22:20:03.3123'; # 2021-05-15 22:20:03.3123
+SELECT timestamp(1) '2021-05-15 22:20:03.3123'; # 2021-05-15 22:20:03.3
+SELECT timestamp(3) '2021-05-15 22:20:03.3123'; # 2021-05-15 22:20:03.312
+
+# time
+SELECT time '22:20:03.3123' #  22:20:03.3123
+SELECT time(1) '22:20:03.3123'; # 22:20:03.3
+
+# date
+SELECT date '2021-05-15';  # 2021-05-15
+
+```
+其他数据结构请参考文档
+
+## 表
+
+## 优化
+- [sql优化](http://postgres.cn/docs/12/performance-tips.html)
 
 ## 数据安全
 - 应用一般需要在内存和磁盘做平衡，即性能和安全之间做平衡，为了能做到对磁盘里的文件进行修改，应用往往会映射文件内容到进程内存中，并在适当的时候请求操作系统把修改过内容强制刷新到磁盘中，当然也可以交由操作系统的缓冲，由操作系统决定在适当的时候写回磁盘，上面这么做的好处在于减少没必要的磁盘io。当然现代磁盘本身为了提高磁盘的读写性能也会提供一个缓存（一般是关闭的）。
@@ -448,3 +505,9 @@
     archive_mode = off  # 打开归档 （可选）
     archive_command = '' # 本地拷贝 （可选）
     ```
+
+## 监控和基准测试
+- [统计](http://postgres.cn/docs/12/monitoring-stats.html)
+- [锁](http://postgres.cn/docs/12/view-pg-locks.html)
+- [pg_bench](http://postgres.cn/docs/12/pgbench.html)
+- [pg_stat_statements](http://postgres.cn/docs/12/pgstatstatements.html)
