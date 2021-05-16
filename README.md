@@ -15,11 +15,11 @@
     - [角色](#角色)
     - [数据库](#数据库)
     - [表空间](#表空间)
-    - [类型转换](#类型转换)
+    - [类型指定和转换](#类型指定和转换)
     - [常用数据类型](#常用数据类型)
-    - [分区](#分区)
+    - [表的增删改查](#表的增删改查)
+    - [声明式分区](#声明式分区)
     - [索引](#索引)
-    - [增删改查](#增删改查)
     - [SQL优化](#SQL优化)
 - [数据安全](#数据安全)
 - [简单运维](#简单运维)
@@ -119,7 +119,7 @@
     ```sh
     internal # 无法直接修改，需要重新初始化数据库
     postmaster # 需重启
-    sighup # 需reload
+    sighup # 需reload配置文件
     user # 当前会话
     ```
 - 比如，[ALTER SYSTEM](http://www.postgres.cn/docs/12/sql-altersystem.html)和postgresql.conf可以修改全局配置，其中的一部分参数可以在修改后直接通pg_ctl reload来生效，还有一小部分在服务器启动后就不能变更，除非重启服务器比如listen_addresses（监听ip），但大部分是可以实时修改的，其中又分新对话生效和当前对话生效，前者可以用[ALTER DATABASE](http://www.postgres.cn/docs/12/sql-alterdatabase.html)和[ALTER ROLE](http://www.postgres.cn/docs/12/sql-alterrole.html)在设置之后的新的对话里生效，在局部范围内覆盖全局设置，后者可以通过[SET](http://www.postgres.cn/docs/12/sql-set.html)修改当前会话的配置以覆盖全局设置
@@ -320,7 +320,20 @@
     DROP ROLE xxxx; # 全局
     ```
 ## 数据库
-- 从表pg_database里可以查询所有的数据库，初始化成功后会默认创建1个postgres表（如果postgres作为初始用户），2个模板数据库（template0和template1），其中postgres是直接从template1拷贝而来。数据库属于postgresql逻辑中的最高层，单个服务器实例可以管理多个数据库，但应用的每个连接只能单次访问其中一个数据库，所以不同的数据库可以提供给多个不同项目作为物理上的隔离。创建的sql语句可以参考[文档](http://www.postgres.cn/docs/12/sql-createdatabase.html)，删除数据库的时候需要是拥有者或超级用户，而且不能处于要删的数据库里，不然会报错：
+- 从表pg_database里可以查询所有的数据库，初始化成功后会默认创建1个postgres表（如果postgres作为初始用户），2个模板数据库（template0和template1），其中postgres是直接从template1拷贝而来。数据库属于postgresql逻辑中的最高层，单个服务器实例可以管理多个数据库，但应用的每个连接只能单次访问其中一个数据库，所以不同的数据库可以提供给多个不同项目作为物理上的隔离:
+    ```sh
+    CREATE DATABASE name
+        [ [ WITH ] [ OWNER [=] user_name ] # 指定拥有者
+           [ TEMPLATE [=] template ] # 指定要使用的模板
+           [ ENCODING [=] encoding ] 
+           [ LC_COLLATE [=] lc_collate ]
+           [ LC_CTYPE [=] lc_ctype ]
+           [ TABLESPACE [=] tablespace_name ] # 指定表空间
+           [ ALLOW_CONNECTIONS [=] allowconn ] # 指定是否可以连接该数据库
+           [ CONNECTION LIMIT [=] connlimit ] # 连接数
+           [ IS_TEMPLATE [=] istemplate ] ] # 是否作为模板
+    ```
+- 详细内容介绍可以参考[文档](http://www.postgres.cn/docs/12/sql-createdatabase.html)，删除数据库的时候需要是拥有者或超级用户，而且不能处于要删的数据库里，不然会报错：
     ```sh
     CREATE DATABASE xxx OWNER xxx; # 为角色创建数据库
     DROP DATABASE name; # 删除数据库
@@ -335,8 +348,28 @@
     CREATE DATABASE xxx OWNER xxx TEMPLATE template1;
     ```
 
-- 可以通过系统视图[pg_settings](http://www.postgres.cn/docs/12/view-pg-settings.html)或SHOW ALL找到会话级别的参数，通过如下sql语句修改在数据库范围的会话配置：
+- 修改数据库的信息可以参考[文档](http://postgres.cn/docs/12/sql-alterdatabase.html)，其中如果设置了新的表空间会把旧数据全部迁移到新的表空间:
     ```sh
+    ALTER DATABASE name [ [ WITH ] option [ ... ] ]
+    这里 option 可以是：
+        ALLOW_CONNECTIONS allowconn # 是否可以连接该数据库
+        CONNECTION LIMIT connlimit # 连接数
+        IS_TEMPLATE istemplate # 是否作为模板
+
+    ALTER DATABASE name RENAME TO new_name # 改名
+    ALTER DATABASE name OWNER TO { new_owner | CURRENT_USER | SESSION_USER } # 指定拥有者
+    ALTER DATABASE name SET TABLESPACE new_tablespace # 指定新的表空间，会自动迁移数据
+
+    ```
+
+- 可以通过系统视图[pg_settings](http://www.postgres.cn/docs/12/view-pg-settings.html)或SHOW ALL找到会话级别的参数，通过如下sql语句修改在数据库范围的会话配置，其中FROM CURRENT会保存当前的会话参数作为数据库的会话配置：
+    ```sh
+    ALTER DATABASE name SET configuration_parameter { TO | = } { value | DEFAULT }
+    ALTER DATABASE name SET configuration_parameter FROM CURRENT # 保存当前的会话参数作为数据库的会话配置
+    ALTER DATABASE name RESET configuration_parameter
+    ALTER DATABASE name RESET ALL
+
+    ## 例子
     ALTER DATABASE xxx SET yyy TO off; # 修改
     ALTER DATABASE xxx RESET yyy； # 还原
     ```
@@ -348,16 +381,33 @@
     CREATE DATABASE xxx OWNER xxx TABLESPACE yyy; # 分配数据库表空间
     DROP TABLESPACE yyy # 删除表空间
     ```
-- 若数据库分配在某个表空间里，那在该数据库里创建的对象默认就会分配在对应的表空间里面，其中包括表，索引，临时表之类
-- 详细内容可以参考[CREATE TABLESAPCE](http://www.postgres.cn/docs/12/sql-createtablespace.html)
+- 若数据库分配在某个表空间里，那在该数据库里创建的对象默认就会分配在对应的表空间里面，其中包括表，索引，临时表之类，ALTER SET TABLESPACE 等语句会导致新旧数据迁移，详细内容可以参考[CREATE TABLESAPCE](http://www.postgres.cn/docs/12/sql-createtablespace.html)
 
-## 类型转换
+## 类型指定和转换
+```sh
+# 指明类型
 
+SELECT '37'; # 37
+SELECT int2 '37'; # 37
+SELECT varchar 'abcd'; # abcd
+SELECT varchar(1) 'abcd'; # a
+
+# 类型转换
+
+SELECT CAST ('AD' AS varchar(10)); # AD
+SELECT 'AD'::varchar(10); # AD
+SELECT CAST (7 AS numeric(3, 1)); # 7.0
+SELECT CAST (integer '7' AS numeric(3, 1)); # 7.0
+SELECT 7::numeric(3, 1); # 7.0
+SELECT '7'::numeric(3, 1); # 7.0
+SELECT CAST (varchar '37' AS int4); # 37
+SELECT 7.7::double precision; #7.7
+```
 -  请见[文档](http://www.postgres.cn/docs/12/sql-expressions.html#SQL-SYNTAX-TYPE-CASTS)
 
 ## 常用数据类型
 
-    ```sh
+```sh
     名字                  存储尺寸        描述	            范围                                        
     smallint	          2字节	        小范围整数          -32768 to +32767
     integer         	  4字节	        整数的典型选择      -2147483648 to +2147483647
@@ -372,8 +422,7 @@
     character varying     有限制的变长                      最大1G
     character             定长，空格填充                    最大1G
     text	              无限变长，被压缩                  
-    ```
-
+```
 - smallint（int2），integer（int，int4），bigint（int8）是可用的整数类型，算术运算快
 - numeric，deciaml是任意精度数字，实际使用是形如numeric(m, n)，其中m为精度，即总位数，n为标度，即小数点后的位数，可以保证数据精度和计算准确，但是算术运算慢，可以支持字符串NaN（非数字）
 - real（float4），double precision（float，float8）是浮点类型，不准确，可以支持字符串Infinity，-Infinity，NaN（非数字）
@@ -402,9 +451,76 @@ SELECT time(1) '22:20:03.3123'; # 22:20:03.3
 SELECT date '2021-05-15';  # 2021-05-15
 
 ```
-其他数据结构请参考文档
+其他数据结构请参考[文档](http://postgres.cn/docs/12/datatype.html)
 
-## 表
+## 表的增删改查
+
+- 简单介绍表的创建，其中如果为临时表则在会话结束就自动被清理。如果没有指定约束名，系统将生成一个，和列约束不同的是表约束能够跨越多列，更多详细内容请参考[文档](http://postgres.cn/docs/12/sql-createtable.html)
+
+    ```sh
+    CREATE [ TEMPORARY | UNLOGGED ] TABLE [ IF NOT EXISTS ] table_name ( [
+    { column_name data_type [ CONSTRAINT column_constraint_name [ 列约束 ] ]
+        | CONSTRAINT table_constraint_name [表约束] }
+    ] )
+    [ PARTITION BY { RANGE | LIST | HASH } ( { column_name | ( expression ) } ) ]
+    [ WITH ( storage_parameter [= value] ) | WITHOUT OIDS ]
+    [ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } ]
+    [ TABLESPACE tablespace_name ]
+
+
+    ## 简介
+
+    TEMPORARY或者TEMP # 指定为临时表配合ON COMMIT可以和事务关联
+    UNLOGGED # 不进行预写日志，速度快
+    IF NOT EXISTS # 如果存在表名则忽略
+    table_name # 表名
+    column_name # 列名
+    data_type # 数据类型
+    CONSTRAINT column_constraint_name [ 列约束 ] # 指定列约束名，约束名将会出现在错误消息
+    CONSTRAINT table_constraint_name [表约束]  # 指定表约束，跨多列，约束名将会出现在错误消息
+    PARTITION BY
+    storage_parameter # 存储参数
+
+    ##  常用列约束
+
+    NOT NULL  # 非空
+    NULL  # 可以为空
+    CHECK ( expression ) # 产生布尔结果的表达式，如果为FALSE就报错
+    DEFAULT default_expr  # 默认值
+    UNIQUE  # 唯一约束
+    PRIMARY KEY  # 主键约束（只能指定一个）
+
+    ## 常用表约束
+
+    CHECK ( expression )  # 产生布尔结果的表达式，如果为FALSE就报错
+    UNIQUE ( column_name [, ... ] )  # 唯一约束
+    PRIMARY KEY ( column_name [, ... ] )  # 主键约束（只能指定一个）
+
+    ```
+
+- 表的存储参数可以参考[这里](http://postgres.cn/docs/12/sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS)，存储参数可以来优化表的性能：
+    ```sh
+    fillfactor = 50 # 指定百分比来决定留给更新使用的空间比例，使得更新的数据位于相同页上，这样索引只需要指向新位置即可，不需要重新构建，速度快
+    ```
+
+- 简单使用：
+```sh
+    CREATE TABLE table_name (
+        update_date date NOT NULL,
+        worker_id int8 CHECK(worker_id > 1000),
+        nickname varchar(64) UNIQUE,
+        name varchar(64),
+        age int4,
+        CONSTRAINT worker_id_index PRIMARY KEY(worker_id),
+        CONSTRAINT age_check CHECK(age > 18 AND age < 60)
+    );
+
+    ALTER TABLE 
+```
+## 声明式分区
+
+
+## 索引
 
 ## SQL优化
 - [sql优化](http://postgres.cn/docs/12/performance-tips.html)
