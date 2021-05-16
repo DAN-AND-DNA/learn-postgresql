@@ -17,9 +17,9 @@
     - [表空间](#表空间)
     - [类型指定和转换](#类型指定和转换)
     - [常用数据类型](#常用数据类型)
+    - [索引](#索引)
     - [表的增删改查](#表的增删改查)
     - [声明式分区](#声明式分区)
-    - [索引](#索引)
     - [SQL优化](#SQL优化)
 - [数据安全](#数据安全)
 - [简单运维](#简单运维)
@@ -453,6 +453,13 @@ SELECT date '2021-05-15';  # 2021-05-15
 ```
 其他数据结构请参考[文档](http://postgres.cn/docs/12/datatype.html)
 
+
+## 索引
+```sh
+#TODO
+```
+[索引](http://postgres.cn/docs/12/indexes.html)
+
 ## 表的增删改查
 
 - 简单介绍表的创建，其中如果为临时表则在会话结束就自动被清理。如果没有指定约束名，系统将生成一个，和列约束不同的是表约束能够跨越多列，更多详细内容请参考[文档](http://postgres.cn/docs/12/sql-createtable.html)
@@ -504,8 +511,9 @@ SELECT date '2021-05-15';  # 2021-05-15
     ```
 
 - 简单使用：
-```sh
-    CREATE TABLE table_name (
+    ```sh
+    # 创建表
+    CREATE TABLE table_name1 (
         update_date date NOT NULL,
         worker_id int8 CHECK(worker_id > 1000),
         nickname varchar(64) UNIQUE,
@@ -515,12 +523,95 @@ SELECT date '2021-05-15';  # 2021-05-15
         CONSTRAINT age_check CHECK(age > 18 AND age < 60)
     );
 
-    ALTER TABLE 
-```
+    CREATE TABLE table_name2 (
+        update_date date,
+        worker_id int8 PRIMARY KEY CHECK(worker_id > 1000),
+        nickname varchar(64) CONSTRAINT must_be_different UNIQUE,
+        name varchar(64),
+        age int4,
+        CONSTRAINT age_check CHECK(age > 18 AND age < 60)
+    );
+
+    # 添加和删除列
+    ALTER TABLE table_name2 ADD COLUMN info text;
+    ALTER TABLE table_name2 DROP COLUMN info;
+
+    # 添加和删除表约束
+    ALTER TABLE table_name1 ADD CONSTRAINT must_be_different UNIQUE(name);
+    ALTER TABLE table_name1 DROP CONSTRAINT must_be_different;
+
+    # 添加和删除列约束
+    ALTER TABLE table_name2 ALTER COLUMN update_date SET NOT NULL;
+    ALTER TABLE table_name2 ALTER COLUMN update_date DROP NOT NULL;
+
+    # 改列类型
+    ALTER TABLE table_name2 ALTER COLUMN update_date TYPE timestamp(3);
+
+    # 改列名字
+    ALTER TABLE table_name2 RENAME COLUMN update_date TO update_date1;
+
+    # 改表名
+    ALTER TABLE table_name2 RENAME TO table_name0;
+
+    CREATE TABLE table_name3 (
+        update_date date NOT NULL,
+        nickname varchar(64),
+        age int4
+    );
+
+    # 插入
+    INSERT INTO table_name3 (date, nickname, age) VALUES ('2021-05-07', 'dan', 27);
+    INSERT INTO table_name3 VALUES ('2021-05-07', 'dan', 27);
+
+    INSERT INTO table_name3 (date, nickname, age) VALUES ('2021-05-07', 'dan', 27), ('2021-05-07', 'dan1', 37), '2021-06-07', 'dan2', 27); # 批量插入
+
+    # 修改
+    UPDATE table_name3 SET nickname = 'xxxx' WHERE age = 37;
+    UPDATE table_name3 SET nickname = 'dddd' WHERE age = 27 RETURNING nickname AS new_nickname, age; # 返回更新的内容
+
+    # 删除
+    DELETE FROM table_name3 WHERE age = 27;
+    DELETE FROM table_name3 WHERE age = 27 RETURNING *; # 返回删除的内容
+
+    # 查询
+    # TODO
+
+    ```
+    
+    - [查询](http://postgres.cn/docs/12/queries.html)
+    - [INSERT](http://postgres.cn/docs/12/sql-insert.html#SQL-ON-CONFLICT)
+    - [UPDATE](http://postgres.cn/docs/12/sql-update.html)
+    - [DELETE](http://postgres.cn/docs/12/sql-delete.html)
+    - [SELECT](http://postgres.cn/docs/12/sql-select.html)
+
+
 ## 声明式分区
+- 在某些情况下查询性能能够显著提升，特别是当那些访问压力大的行在一个分区或者少数几个分区时。划分可以取代索引的主导列、减小索引尺寸以及使索引中访问压力大的部分更有可能被放在内存中。
+- 当查询或更新访问一个分区的大部分行时，可以通过该分区上的一个顺序扫描来取代分散到整个表上的索引和随机访问，这样可以改善性能。
+- 如果批量操作的需求是在分区设计时就规划好的，则批量装载和删除可以通过增加或者去除分区来完成。执行ALTER TABLE DETACH PARTITION或者使用DROP TABLE删除一个分区远快于批量操作。这些命令也完全避免了批量DELETE导致的VACUUM开销。
+- 很少使用的数据可以被迁移到便宜且较慢的存储介质上。
+
+    ```sh
+    # postgresql.conf
+
+    constraint_exclusion = partition # 对分区进行的检查约束，忽略那些条件不符合约束的分区表
+    enable_partition_pruning  = on # 允许查询规划器从查询计划中消除那些条件不符合约束的分区表
+
+    CREATE TABLE table_name4 (
+        update_date date NOT NULL,
+        nickname varchar(64),
+        age int4
+    ) PARTITION BY RANGE (update_date);
+
+    CREATE TABLE table_name4_y2021m05 PARTITION OF table_name4 FOR VALUES FROM ('2021-05-01') TO ('2021-06-01');
+    CREATE TABLE table_name4_y2021m06 PARTITION OF table_name4 FOR VALUES FROM ('2021-06-01') TO ('2021-07-01'); 
+    CREATE TABLE table_name4_y2021m07 PARTITION OF table_name4 FOR VALUES FROM ('2021-07-01') TO ('2021-08-01');
 
 
-## 索引
+    DROP TABLE table_name3_y2021m05 # 删除分区
+    ALTER TABLE table_name3 DETACH PARTITION table_name3_y2021m06; # 移除，作为一个独立的表
+    ```
+- 每个分区表相对比较独立的，约束也都是针对每个分区表，具体操作和限制可以参考[文档](http://postgres.cn/docs/12/ddl-partitioning.html)
 
 ## SQL优化
 - [sql优化](http://postgres.cn/docs/12/performance-tips.html)
